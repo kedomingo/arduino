@@ -1,6 +1,27 @@
-#define CLOCKSPEED 16000000
+/**
+ * Double frequency generator controlled by rotary encoder.
+ * 
+ * Timer 1 generates a PWM signal on pin OC1A (Digital 9)
+ * Timer 2 generates a PWM signal on pin OC2B (Digital 3)
+ * 
+ * Adjusts duty cycle adjustment using rotary encoder on digital pins 4, 5, 6 for CLK, DT, SW
+ * Toggles between frequency 1 and frequency 2 duty cycle adjustment using 
+ * the push button on the rotary encoder.
+ * 
+ */
+
+
+// Timer behavior modes
 #define TIMER_OPERATION_MODE_NORMAL 1
 #define TIMER_OPERATION_MODE_PWM 2
+
+// Rotary Encoder Inputs
+#define ROTARY_CLK 4
+#define ROTARY_DT 5
+#define ROTARY_SW 6
+
+#define FREQ_1_SELECT 1
+#define FREQ_2_SELECT 2
 
 // ----------------------------------
 // Class definitions
@@ -9,7 +30,7 @@
 class Timer {
   protected:
     /**
-     * Wave frequency in Herz. 1-CLOCKSPEED
+     * Wave frequency in Herz. 1-F_CPU
      */
     unsigned long frequencyHz = 0;
     
@@ -43,12 +64,12 @@ class Timer {
     Timer() {}
     
     Timer(unsigned long frequencyHz) {
-      this->frequencyHz = max(0, min(CLOCKSPEED, frequencyHz));
+      this->frequencyHz = max(0, min(F_CPU, frequencyHz));
       this->dutyCycle = 100;
     }
     
     Timer(unsigned long frequencyHz, int dutyCycle) {
-      this->frequencyHz = max(0, min(CLOCKSPEED, frequencyHz));
+      this->frequencyHz = max(0, min(F_CPU, frequencyHz));
       this->dutyCycle = max(0, min(100, dutyCycle));
     }
 
@@ -61,6 +82,7 @@ class Timer {
     
     virtual void normalMode();
     virtual void pwmMode();
+    virtual void adjustDutyCycle(int newDutyCycle);
 
   protected:
     virtual void interruptNormal();
@@ -137,6 +159,19 @@ class Timer1: public Timer {
       DDRB |= (1<<PB1);
     }
 
+    /**
+     * Adjust OCR1A Based on new duty cycle setting
+     */
+    void adjustDutyCycle(int newDutyCycle) {
+      dutyCycle = newDutyCycle;
+      
+      if (operationMode != TIMER_OPERATION_MODE_PWM) {
+        return;
+      }
+      
+      OCR1A = getDutyCycleSteps(counterTop, dutyCycle);
+    }
+
   protected:
     /**
      * Bit settings for timer 1
@@ -162,16 +197,16 @@ class Timer1: public Timer {
      * Get the appropriate prescaler for timer 1
      */
     uint32_t getPreScaler(uint32_t frequency) {
-      if (1024 * frequency < CLOCKSPEED) {
+      if (1024 * frequency < F_CPU) {
         return 1024;
       }
-      if (256 * frequency < CLOCKSPEED) {
+      if (256 * frequency < F_CPU) {
         return 256;
       }
-      if (64 * frequency < CLOCKSPEED) {
+      if (64 * frequency < F_CPU) {
         return 64;
       }
-      if (8 * frequency < CLOCKSPEED) {
+      if (8 * frequency < F_CPU) {
         return 8;
       }
       return 1;
@@ -181,7 +216,7 @@ class Timer1: public Timer {
      * In normal mode,  start-16000000 is used
      */
     uint32_t getCounterStart(uint32_t frequency, int preScaler) {
-      float start = CLOCKSPEED / (preScaler * frequency);
+      float start = F_CPU / (preScaler * frequency);
       return 65536 - round(start);
     }
 
@@ -189,7 +224,7 @@ class Timer1: public Timer {
      * In PWM mode, 0-top is used
      */
     uint32_t getCounterTop(uint32_t frequency, int preScaler) {
-      float top = CLOCKSPEED / (preScaler * frequency);
+      float top = F_CPU / (preScaler * frequency);
       
       return round(top) - 1;
     }
@@ -293,6 +328,19 @@ class Timer2: public Timer {
       DDRD |= (1<<PD3);
     }
 
+    /**
+     * Adjust OCR2B Based on new duty cycle setting
+     */
+    void adjustDutyCycle(int newDutyCycle) {
+      dutyCycle = newDutyCycle;
+      
+      if (operationMode != TIMER_OPERATION_MODE_PWM) {
+        return;
+      }
+      
+      OCR2B = getDutyCycleSteps(counterTop, dutyCycle);
+    }
+
   protected: 
     /**
      * Bit settings for timer 2
@@ -365,7 +413,7 @@ class Timer2: public Timer {
 
       for (byte i = 0; i < 7; i++) {
         for (float top = 0; top < 256; top++) {
-          freq = ((float) CLOCKSPEED) / (preScalers[i] * (top + 1));
+          freq = ((float) F_CPU) / (preScalers[i] * (top + 1));
           error = abs(freq - frequency);
 
           if (error < bestError) {
@@ -384,7 +432,7 @@ class Timer2: public Timer {
      * In normal mode, we start at counterStart and let the counter overflow to 256
      */
     int getCounterStart(uint32_t frequency, uint32_t preScaler, uint32_t slowerFactor) {
-      float start = CLOCKSPEED / (frequency * preScaler * slowerFactor);
+      float start = F_CPU / (frequency * preScaler * slowerFactor);
       return 256 - round(start);
     }
 
@@ -395,7 +443,7 @@ class Timer2: public Timer {
      * under "Setting an exact frequency"
      */
     uint32_t getTimer2SlowerFactor(uint32_t preScaler) {
-      float factor = CLOCKSPEED / (preScaler * 128);
+      float factor = F_CPU / (preScaler * 128);
       return round(factor);
     }
 
@@ -430,18 +478,105 @@ class Timer2: public Timer {
     }
 };
 
+class RotaryEncoder {
+  private:
+    int clkPin, dtPin, swPin;
+
+    int currentStateCLK;
+    int lastStateCLK;
+    String currentDir ="";
+    unsigned long lastButtonPress = 0;
+    
+  public:
+    RotaryEncoder() {}
+  
+    RotaryEncoder(int clkPin, int dtPin, int swPin) {
+     this->clkPin = clkPin; 
+     this->dtPin = dtPin; 
+     this->swPin = swPin; 
+    }
+
+    void setupInputs() {
+      pinMode(clkPin, INPUT);
+      pinMode(dtPin, INPUT);
+      pinMode(swPin, INPUT_PULLUP);
+
+      // Read the initial state of ROTARY_CLK
+      lastStateCLK = digitalRead(clkPin);
+    }
+      
+    /**
+     * Get the rotation value of the rotary encoder.
+     * Returns -1 when rotated counter clockwise
+     * Returns 1 when clockwise
+     * Returns 0 when stationary
+     */
+    int getRotation()
+    {
+      currentStateCLK = digitalRead(clkPin);
+      int result = 0;
+      
+      // If last and current state of clkPin are different, then pulse occurred
+      // React to only 1 state change to avoid double count
+      if (currentStateCLK != lastStateCLK  && currentStateCLK == 1){
+    
+        // If the dtPin state is different than the clkPin state then
+        // the encoder is rotating CCW
+        if (digitalRead(dtPin) != currentStateCLK) {
+          result = -1;
+        } else {
+          result = 1;
+        }
+      }
+    
+      // Remember ROTARY_CLK state
+      lastStateCLK = currentStateCLK;
+    
+      return result;
+    }
+    
+    boolean isButtonPressed()
+    {
+      // Read the button state
+      int btnState = digitalRead(swPin);
+      boolean result = false;
+      
+      //If we detect LOW signal, button is pressed
+      if (btnState == LOW) {
+        //if 50ms have passed since last LOW pulse, it means that the
+        //button has been pressed, released and pressed again
+        if (millis() - lastButtonPress > 50) {
+          result = true;
+        }
+    
+        // Remember last button press event
+        lastButtonPress = millis();
+      }
+    
+      return result;
+    }
+};
+
+
+
 // ----------------------------------
 // Global variables
 // ----------------------------------
 
 // 4 Hz
 unsigned long frequencyHz1 = 61;
+int dutyCycleFrequency1Percent = 10;
 Timer1 timer1;
-
 
 // 13 KHz
 unsigned long frequencyHz2 = 13000;
+int dutyCycleFrequency2Percent = 0;
 Timer2 timer2;
+
+RotaryEncoder rotary;
+// Rotary encoder will adjust freq2 duty cycle on boot
+// Press the button to switch to freq1 
+int adjustmentSelect = FREQ_2_SELECT;
 
 // ----------------------------------
 // Setup
@@ -454,11 +589,14 @@ void setup() {
   // Disable interrupts
   noInterrupts(); 
 
-  //timer1 = Timer1(frequencyHz1, 10);
-  //timer1.pwmMode();
+  timer1 = Timer1(frequencyHz1, dutyCycleFrequency1Percent);
+  timer1.pwmMode();
   
-  timer2 = Timer2(frequencyHz2, 100);
+  timer2 = Timer2(frequencyHz2, dutyCycleFrequency2Percent);
   timer2.pwmMode();
+
+  rotary = RotaryEncoder(ROTARY_CLK, ROTARY_DT, ROTARY_SW);
+  rotary.setupInputs();
 
   // Re-enable interrupts
   interrupts();
@@ -469,7 +607,7 @@ void setup() {
 // ----------------------------------
 
 /**
- * Timer 1 counter overflow vector Interrupt for Timer1
+ * Timer 1 counter overflow vector Interrupt for Timer1 (if running in normal mode)
  */
 ISR(TIMER1_OVF_vect)
 {
@@ -477,7 +615,7 @@ ISR(TIMER1_OVF_vect)
 }
 
 /**
- * Timer 2 counter overflow vector Interrupt for Timer2
+ * Timer 2 counter overflow vector Interrupt for Timer2 (if running in normal mode)
  */
 ISR(TIMER2_OVF_vect)
 {
@@ -489,4 +627,32 @@ ISR(TIMER2_OVF_vect)
 // ----------------------------------
 
 void loop() {
+  int rotation = rotary.getRotation();
+
+  if (rotation != 0) {
+    if (adjustmentSelect == FREQ_1_SELECT) {
+      dutyCycleFrequency1Percent = min(100, max(0, dutyCycleFrequency1Percent + (rotation * 4)));
+      Serial.print("Frequency 1 duty cycle %: ");
+      Serial.println(dutyCycleFrequency1Percent);
+      timer1.adjustDutyCycle(dutyCycleFrequency1Percent);
+    }
+    else {
+      dutyCycleFrequency2Percent = min(100, max(0, dutyCycleFrequency2Percent + (rotation * 4)));
+      Serial.print("Frequency 2 duty cycle %: ");
+      Serial.println(dutyCycleFrequency2Percent);
+      timer2.adjustDutyCycle(dutyCycleFrequency2Percent);
+    }
+  }
+  
+  if (rotary.isButtonPressed()) {
+    if (adjustmentSelect == FREQ_1_SELECT) {
+      adjustmentSelect = FREQ_2_SELECT;
+    }
+    else {
+      adjustmentSelect = FREQ_1_SELECT;
+    }
+  }
+
+  // Put in a slight delay to help debounce the reading
+  delay(1);
 }
