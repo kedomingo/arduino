@@ -1,15 +1,23 @@
 /**
  * Double frequency generator controlled by rotary encoder.
+ * This supports variable frequency up to the clockspeed of the chip being used
+ * For atmega328p, this is 16MHz. Calculation of the appropriate pre-scalers
+ * as well as setting the timing registers for both Timer 1 and Timer 2 are included in the code.
  * 
  * Timer 1 generates a PWM signal on pin OC1A (Digital 9)
  * Timer 2 generates a PWM signal on pin OC2B (Digital 3)
  * 
- * Adjusts duty cycle adjustment using rotary encoder on digital pins 4, 5, 6 for CLK, DT, SW
+ * Duty cycle adjustment using rotary encoder on digital pins 4, 5, 6 for CLK, DT, SW
  * Toggles between frequency 1 and frequency 2 duty cycle adjustment using 
  * the push button on the rotary encoder.
  * 
+ * @author Kyle Domingo https://github.com/kedomingo/arduino
+ * 
+ * main sources:
+ *  https://wolles-elektronikkiste.de/en/timer-and-pwm-part-2-16-bit-timer1
+ *  https://wolles-elektronikkiste.de/en/timer-and-pwm-part-1-8-bit-timer0-2
+ * 
  */
-
 
 // Timer behavior modes
 #define TIMER_OPERATION_MODE_NORMAL 1
@@ -22,6 +30,9 @@
 
 #define FREQ_1_SELECT 1
 #define FREQ_2_SELECT 2
+
+// This is the slowest frequency timer 2 can handle in PWM mode due to its low resolution
+#define MIN_PWM_TIMER_2 61
 
 // ----------------------------------
 // Class definitions
@@ -47,13 +58,13 @@ class Timer {
     /**
      * In normal mode, counter starts at this point until timer overflow is hit
      */
-    unsigned int counterStart;
+    unsigned long counterStart;
 
     /**
      * In pwm mode, counter starts at 0 and uses CTC mode to compare the counter 
      * when it hits this top
      */
-    unsigned int counterTop;
+    unsigned long counterTop;
 
     /**
      * This timer's operation mode
@@ -130,6 +141,8 @@ class Timer1: public Timer {
       Serial.println(preScaler);
       
       counterTop = getCounterTop(frequencyHz, preScaler);
+      Serial.print("PWM TOP value 1: ");
+      Serial.println(counterTop);
       
 
       // Set Mode 14: Fast PWM, ICR1 TOP, Update of OCR1x at BOTTOM, TOV Flag set on TOP
@@ -144,8 +157,6 @@ class Timer1: public Timer {
       // + Set waveform generation mode bits
       TCCR1B = getPreScalerBitSettings(preScaler) + (1<<WGM13) + (1<<WGM12);
 
-      Serial.print("PWM TOP value 1: ");
-      Serial.println(counterTop);
       Serial.print("PWM Duty cycle step: ");
       Serial.println(getDutyCycleSteps(counterTop, dutyCycle));
 
@@ -192,31 +203,40 @@ class Timer1: public Timer {
           return (1<<CS10);
       }
     }
-    
+
     /**
-     * Get the appropriate prescaler for timer 1
+     * Get the appropriate pre-scaler.
+     * The resulting scale should be such that the 1 pulse is less than 65536 steps of the counter
+     * i.e. counterStart is not negative because the pulse exceeds the max counter 65536
      */
     uint32_t getPreScaler(uint32_t frequency) {
-      if (1024 * frequency < F_CPU) {
-        return 1024;
+      if (getCounterStart(frequency, 1) > 0) {
+        return 1;
       }
-      if (256 * frequency < F_CPU) {
-        return 256;
-      }
-      if (64 * frequency < F_CPU) {
-        return 64;
-      }
-      if (8 * frequency < F_CPU) {
+      if (getCounterStart(frequency, 8) > 0) {
         return 8;
       }
-      return 1;
+      if (getCounterStart(frequency, 64) > 0) {
+        return 64;
+      }
+      if (getCounterStart(frequency, 256) > 0) {
+        return 256;
+      }
+      return 1024;
     }
     
     /**
-     * In normal mode,  start-16000000 is used
+     * In normal mode,  start-65536 is used
      */
-    uint32_t getCounterStart(uint32_t frequency, int preScaler) {
-      float start = F_CPU / (preScaler * frequency);
+    int32_t getCounterStart(uint32_t frequency, int preScaler) {
+      float start = ((float) F_CPU) / (preScaler * frequency);
+
+      // We cannot return 65536, otherwise the formula for the frequncy
+      // could encounter a division by zero. Round it up to 1
+      if (round(start) == 0) {
+        return 65535;
+      }
+      
       return 65536 - round(start);
     }
 
@@ -224,8 +244,8 @@ class Timer1: public Timer {
      * In PWM mode, 0-top is used
      */
     uint32_t getCounterTop(uint32_t frequency, int preScaler) {
-      float top = F_CPU / (preScaler * frequency);
-      
+      float top = ((float) F_CPU) / (preScaler * frequency);
+
       return round(top) - 1;
     }
 
@@ -233,7 +253,8 @@ class Timer1: public Timer {
      * In PWM mode, the duty cycle is a fraction of the pulse width (0-counterTop)
      */
     uint32_t getDutyCycleSteps(uint32_t counterTop, int dutyCycle) {
-      float step = counterTop * dutyCycle / 100; 
+      float step = ((float) counterTop * dutyCycle) / 100; 
+      
       return round(step);
     }
 
@@ -262,19 +283,15 @@ class Timer2: public Timer {
     void normalMode() {
       operationMode = TIMER_OPERATION_MODE_NORMAL;
       
-      preScaler = getPreScaler(frequencyHz);
+      setBestPreScalerAndFactor(frequencyHz);
       Serial.print("Prescaler value 2: ");
       Serial.println(preScaler);
     
-      slowerFactor = getTimer2SlowerFactor(preScaler);
       Serial.print("Slower factor: ");
       Serial.println(slowerFactor);
       
       // Compare Output Mode Bits: OC2A OC2B disconnected on Normal Port Operation Mode
       TCCR2A = 0;
-    
-      // Clear TCCR2B
-      TCCR2B = 0;
     
       // Set counter start
       TCNT2 = counterStart = getCounterStart(frequencyHz, preScaler, slowerFactor);
@@ -295,6 +312,14 @@ class Timer2: public Timer {
      */
     void pwmMode() {
       operationMode = TIMER_OPERATION_MODE_PWM;
+
+      if (frequencyHz < MIN_PWM_TIMER_2) {
+        Serial.print("WARNING: Timer2 does not support frequencies less than ");
+        Serial.print(MIN_PWM_TIMER_2);
+        Serial.print("Hz. Setting frequency to ");
+        Serial.println(MIN_PWM_TIMER_2);
+        frequencyHz = MIN_PWM_TIMER_2;
+      }
 
       setBestPwmPreScalerAndTop(frequencyHz, dutyCycle);
       Serial.print("PWM Prescaler value 2: ");
@@ -367,35 +392,41 @@ class Timer2: public Timer {
     /**
      * Get the appropriate prescaler for timer 2 in normal mode
      */
-    uint32_t getPreScaler(uint32_t frequency) {
-      int slowerFactor = getTimer2SlowerFactor(1024);
-      if (getCounterStart(frequency, 1024, slowerFactor) > 0) {
-        return 1024;
-      }
-      slowerFactor = getTimer2SlowerFactor(256);
-      if (getCounterStart(frequency, 256, slowerFactor) > 0) {
-        return 256;
-      }
-      slowerFactor = getTimer2SlowerFactor(128);
-      if (getCounterStart(frequency, 128, slowerFactor) > 0) {
-        return 128;
-      }
+    uint32_t setBestPreScalerAndFactor(uint32_t frequency) {
+      float preScalers[] = {1, 8, 32, 64, 128, 256, 1024};
+      float scaleFactors[] = {1, 2, 4, 8, 10, 20, 30, 40, 50, 100, 200, 300, 400, 500, 600, 700, 800, 900, 1000};
+
+      float bestPreScaler = 1;
+      float bestScaleFactor = 1;
+      float bestError = 1000;
       
-      slowerFactor = getTimer2SlowerFactor(64);
-      if (getCounterStart(frequency, 64, slowerFactor) > 0) {
-        return 128;
+      float error;
+      float freq;
+      long start;
+
+      for (int i = 0; i < 7; i++) {
+        for (int j = 0; j < 10; j++) {
+          
+          start = getCounterStart(frequency, preScalers[i], scaleFactors[j]);
+
+          // 128 is an arbitrary limit for a good place to start. 
+          // No idea what a "good value" should be as I could not find a definite criteria
+          if (start > 0 && start < 128) {
+                     
+            freq = ((float)F_CPU) / (preScalers[i] * (256 - start)) / scaleFactors[j];
+            error = abs(frequency-freq);
+            
+            if (error < bestError) {
+              bestError = error;
+              bestPreScaler = preScalers[i];
+              bestScaleFactor = scaleFactors[j];
+            }
+          }
+        }
       }
-      
-      slowerFactor = getTimer2SlowerFactor(32);
-      if (getCounterStart(frequency, 32, slowerFactor) > 0) {
-        return 32;
-      }
-      
-      slowerFactor = getTimer2SlowerFactor(8);
-      if (getCounterStart(frequency, 8, slowerFactor) > 0) {
-        return 8;
-      }
-      return 1;
+
+      preScaler = bestPreScaler;
+      slowerFactor = bestScaleFactor;
     }
 
     /**
@@ -405,8 +436,10 @@ class Timer2: public Timer {
       float preScalers[] = {1, 8, 32, 64, 128, 256, 1024};
 
       float bestPreScaler = 1;
-      float bestError = 2;
       float bestTop = 255;
+      // In some frequencies, we cannot find a good enough result, due to limited resolution
+      // Make an initial error of 100KHz
+      float bestError = 100000;
       
       float error;
       float freq;
@@ -431,27 +464,24 @@ class Timer2: public Timer {
     /**
      * In normal mode, we start at counterStart and let the counter overflow to 256
      */
-    int getCounterStart(uint32_t frequency, uint32_t preScaler, uint32_t slowerFactor) {
-      float start = F_CPU / (frequency * preScaler * slowerFactor);
-      return 256 - round(start);
-    }
+    int32_t getCounterStart(uint32_t frequency, uint32_t preScaler, uint32_t slowerFactor) {
+      float start = ((float) F_CPU) / (frequency * preScaler * slowerFactor);
 
-    /**
-     * Get a value less than half of 256 to get a "good value" for counter start
-     * Not really sure what a good value is. 
-     * Look at https://wolles-elektronikkiste.de/en/timer-and-pwm-part-1-8-bit-timer0-2
-     * under "Setting an exact frequency"
-     */
-    uint32_t getTimer2SlowerFactor(uint32_t preScaler) {
-      float factor = F_CPU / (preScaler * 128);
-      return round(factor);
+      // We cannot return 256 due to rounding error. Otherwise the formula for frequency 
+      // could encounter a divsion by zero. Round it up to 1
+      if (round(start) == 0) {
+        return 255;
+      }
+      
+      return 256 - round(start);
     }
 
     /**
      * In PWM mode, the duty cycle is a fraction of the pulse width (0-counterTop)
      */
     uint32_t getDutyCycleSteps(uint32_t counterTop, int dutyCycle) {
-      float step = counterTop * dutyCycle / 100; 
+      float step = ((float) counterTop * dutyCycle) / 100; 
+      
       return round(step);
     }
 
@@ -563,14 +593,14 @@ class RotaryEncoder {
 // Global variables
 // ----------------------------------
 
-// 4 Hz
-unsigned long frequencyHz1 = 61;
+// 13 KHz
+unsigned long frequencyHz1 = 13000;
 int dutyCycleFrequency1Percent = 10;
 Timer1 timer1;
 
 // 13 KHz
 unsigned long frequencyHz2 = 13000;
-int dutyCycleFrequency2Percent = 0;
+int dutyCycleFrequency2Percent = 30;
 Timer2 timer2;
 
 RotaryEncoder rotary;
