@@ -37,11 +37,6 @@ count from 0-255 everytime.
 Duty cycle is achieved by using `OCR2B` to turn off the signal. The signal is reset to high when the 
 counter stopping point is reached.
 
-**IMPORTANT**: The frequencies are halved on the Arduino pro mini 3.5v (8MHz). I'm not 
-really sure why since the clockspeed constant F_CPU should be 8000000 in the pro mini
-and should adjust the other values accordingly, but the oscilloscope shows otherwise.
-I didn't bother spending time with it, so just DOUBLE THE FREQUENCY ON THE 8MHz ARDUINO PRO MINI
-
 ## Pins
 
 ### PWM Pins
@@ -71,4 +66,11 @@ Attribution — You must give appropriate credit, provide a link to the license,
 NonCommercial — You may not use the material for commercial purposes.
 
 ShareAlike — If you remix, transform, or build upon the material, you must distribute your contributions under the same license as the original.
+
+
+## UPDATE (Jan 7 2022)
+**The frequencies are halved on the Arduino pro mini 3.5v (8MHz)**. I'm not 
+really sure why since the clockspeed constant F_CPU should be 8000000 in the pro mini
+and should adjust the other values accordingly, but the oscilloscope shows otherwise.
+I didn't bother spending time with it, so just DOUBLE THE FREQUENCY ON THE 8MHz ARDUINO PRO MINI
 
