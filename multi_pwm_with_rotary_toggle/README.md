@@ -1,8 +1,41 @@
 # Dual frequency generator controlled by rotary encoder
 
-This supports frequencies up to the clockspeed of the chip being used
+This is a working example of how to run PWM in Arduino with frequencies outside the default 500 MHz.
+I use this application in components that require PWM with 13kHz frequency. This makes use of two of 
+the three available timers in the chip.
+
+## Math
+
+Theoreticlaly, this supports frequencies up to the clockspeed of the chip being used
 For atmega328p, this is 16MHz. Calculation of the appropriate pre-scalers
 as well as setting the timing registers for both Timer 1 and Timer 2 are included in the code.
+
+However, due to the nature of the timers and counters, we cannot achieve exact frequencies at all times.
+The counters are integers. Timer 1 is 16-bit counting from 0 to 65,535, while Timers 2 and 3 are 8 bit 
+only, counting from 0-255. 1 clock cycle is 1 count.
+
+For 16MHz CPU, Timer completes its counting 16,000,000/65,535 or just over 244 times per second.
+Timers 2 and 3 on the other hand complete their counting to 255 in 16,000,000/255 or just over 62,745
+times in a second.
+
+### Timer 1 logic
+
+We achieve PWM using Timer 1 by starting the count at a certain point and letting it overflow to 65,535.
+Say, to achieve a frequency of 244 Hz, we can set the starting point at 0 so it counts the full 0-65,535,
+completing the 244 counts every second at 16MHz.
+
+Duty cycle is achieved by using `OCR1A` to turn off the signal at a certain point in the count. Using the
+same example, we can achieve a 50% duty cycle by setting `OCR1A` to 32,767. In this case, signal at PIN 9
+is high at count 0, and becomes low at count 32,767, until we reach 65,535 then it turns to high again.
+
+### Timer 2 logic
+
+On the other hand, when using Timers 2 or 3, we can achieve PWM by starting at 0 and stopping at a certain
+point in their count to 255. Say to achieve a frequency of 62.745 KHz, we can let the counter complete its
+count from 0-255 everytime.
+
+Duty cycle is achieved by using `OCR2B` to turn off the signal. The signal is reset to high when the 
+counter stopping point is reached.
 
 **IMPORTANT**: The frequencies are halved on the Arduino pro mini 3.5v (8MHz). I'm not 
 really sure why since the clockspeed constant F_CPU should be 8000000 in the pro mini
