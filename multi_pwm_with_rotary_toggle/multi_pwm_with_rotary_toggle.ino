@@ -1,9 +1,16 @@
 /**
- * Double frequency generator controlled by rotary encoder.
- * This supports variable frequency up to the clockspeed of the chip being used
+ * Dual frequency generator controlled by rotary encoder
+ *
+ * This supports frequencies up to the clockspeed of the chip being used
  * For atmega328p, this is 16MHz. Calculation of the appropriate pre-scalers
  * as well as setting the timing registers for both Timer 1 and Timer 2 are included in the code.
  * 
+ * IMPORTANT: The frequencies are halved on the Arduino pro mini 3.5v (8MHz). I'm not 
+ * really sure why since the clockspeed constant F_CPU should be 8000000 in the pro mini
+ * and should adjust the other values accordingly, but the oscilloscope shows otherwise.
+ * I didn't bother spending time with it, so just DOUBLE THE FREQUENCY ON THE 8MHz ARDUINO PRO MINI
+ *
+ * Pins:
  * Timer 1 generates a PWM signal on pin OC1A (Digital 9)
  * Timer 2 generates a PWM signal on pin OC2B (Digital 3)
  * 
@@ -16,7 +23,11 @@
  * main sources:
  *  https://wolles-elektronikkiste.de/en/timer-and-pwm-part-2-16-bit-timer1
  *  https://wolles-elektronikkiste.de/en/timer-and-pwm-part-1-8-bit-timer0-2
- * 
+ *
+ *
+ * License:
+ * Creative Commons Attribution-NonCommercial-ShareAlike (CC-BY-NC-SA)
+ * https://creativecommons.org/licenses/by-nc-sa/4.0/
  */
 
 // Timer behavior modes
