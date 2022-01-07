@@ -4,6 +4,9 @@ This is a working example of how to run PWM in Arduino with frequencies outside 
 I use this application in components that require PWM with 13kHz frequency. This makes use of two of 
 the three available timers in the chip.
 
+![IMG_20220107_132219](https://user-images.githubusercontent.com/1763107/148578866-a8bb42d8-f684-454f-81fe-1f0c29f5e5f1.jpeg)
+
+
 ## Math
 
 Theoreticlaly, this supports frequencies up to the clockspeed of the chip being used
