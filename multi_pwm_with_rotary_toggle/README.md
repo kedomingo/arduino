@@ -15,11 +15,11 @@ as well as setting the timing registers for both Timer 1 and Timer 2 are include
 
 ### Timers
 
-Timer 1 is 16-bit counting from 0 to 65,535, while Timers 2 and 3 are 8 bit 
+Timer 1 is 16-bit counting from 0 to 65,535, while Timers 2 and 0 are 8 bit 
 only, counting from 0-255. 1 clock cycle is 1 count.
 
-For 16MHz CPU, Timer completes its counting 16,000,000/65,535 or just over 244 times per second.
-Timers 2 and 3 on the other hand complete their counting to 255 in 16,000,000/255 or just over 62,745
+For 16MHz CPU, Timer 1 completes its counting 16,000,000/65,535 or just over 244 times per second.
+Timers 2 and 0 on the other hand complete their counting to 255 in 16,000,000/255 or just over 62,745
 times in a second.
 
 #### Timer 1 logic
@@ -34,7 +34,7 @@ is high at count 0, and becomes low at count 32,767, until we reach 65,535 then 
 
 #### Timer 2 logic
 
-On the other hand, when using Timers 2 or 3, we can achieve PWM by starting at 0 and stopping at a certain
+On the other hand, when using Timers 2 or 0, we can achieve PWM by starting at 0 and stopping at a certain
 point in their count to 255. Say to achieve a frequency of 62.745 KHz, we can let the counter complete its
 count from 0-255 everytime.
 
@@ -51,7 +51,7 @@ before overflowing to 65,536.
 If we count to 615 thirteen thousand times per second, we achieve 7,995,000 which is just short of the chip clock speed.
 If we divide the clock speed of 8,000,000 by 615, we achieve a frequency of 13.008 KHz
 
-Timers 2 and 3 will be worse when it comes to rounding errors because its resolution is only 0-255 compared to Timer 1's 0-65,535
+Timers 2 and 0 will be worse when it comes to rounding errors because its resolution is only 0-255 compared to Timer 1's 0-65,535
 
 ## Pins
 
